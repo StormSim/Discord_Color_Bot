@@ -5,6 +5,7 @@ Discord bot that shows the color of the day
 
 ## Installation
 
+Clone the repo
 install node-modules
 
 ```sh
@@ -32,13 +33,14 @@ https://www.thecolorapi.com/
 
 ## add bot to server
 
-```sh
+```http
 https://discord.com/oauth2/authorize?client_id=1362878729373618177&permissions=183296&integration_type=0&scope=bot```
-```
-name ur channel
 
+
+use 
 ```sh
-Daily_color
+ /setchannel
 ```
+to set the channel where it announces the color
 
 and it should post a daily color at 13.00 CET
