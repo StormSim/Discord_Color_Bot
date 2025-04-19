@@ -45,4 +45,10 @@ use
 ```
 to set the channel where it announces the color
 
-and it should post a daily color at 13.00 CET
+use 
+```sh
+/setrole
+```
+to set role title who gets @
+
+and it should post a daily color at 22.30 CET
