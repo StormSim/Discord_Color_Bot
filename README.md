@@ -1,6 +1,6 @@
 
 
-# Discord bot Color of the day (WIP)
+# Discord bot Color of the day
 Discord bot that shows the color of the day
 
 
