@@ -1,89 +1,278 @@
-import dotenv from 'dotenv';
-dotenv.config();
+import dotenv from "dotenv"
+dotenv.config()
 
-import { Client, GatewayIntentBits, EmbedBuilder, Collection } from 'discord.js';
-import fetch from 'node-fetch';
-import cron from 'node-cron';
+import { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } from "discord.js"
+import fetch from "node-fetch"
+import cron from "node-cron"
+import { SlashCommandBuilder } from "@discordjs/builders"
+import { readFile, writeFile } from "fs/promises"
+import path from "path"
 
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ],
-});
+// For ES module __dirname equivalent
+import { fileURLToPath } from "url"
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
-// in-memory map to store guild-specific channels
-const channelMap = new Map();
+// Multi-server storage
+const serverSettings = new Map()
 
-function getRandomHexColor() {
-    const hex = Math.floor(Math.random() * 16777215).toString(16);
-    return hex.padStart(6, '0');
+// Load saved data if available
+async function loadData() {
+  try {
+    const data = JSON.parse(await readFile(path.join(__dirname, "settings.json")))
+
+    // Convert old format to new format if needed
+    if (data.channelId && data.roleId) {
+      console.log("Converting old settings format to new multi-server format...")
+      // If we have old format data, create an entry for that server
+      if (data.guildId) {
+        serverSettings.set(data.guildId, {
+          channelId: data.channelId,
+          roleId: data.roleId,
+        })
+      }
+    } else {
+      // New format - load all server settings
+      Object.entries(data).forEach(([guildId, settings]) => {
+        serverSettings.set(guildId, settings)
+      })
+    }
+    console.log(`Loaded settings for ${serverSettings.size} servers`)
+  } catch (error) {
+    console.log("No saved settings found or error loading settings:", error.message)
+  }
 }
 
+// Save data
+async function saveData() {
+  const data = Object.fromEntries(serverSettings)
+  await writeFile(path.join(__dirname, "settings.json"), JSON.stringify(data, null, 2))
+  console.log(`Saved settings for ${serverSettings.size} servers`)
+}
+
+// Setup bot
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+})
+
+// Define slash commands
+const commands = [
+  new SlashCommandBuilder()
+    .setName("setchannel")
+    .setDescription("Set the channel for daily color messages")
+    .addChannelOption((option) => option.setName("channel").setDescription("Select a channel").setRequired(true)),
+  new SlashCommandBuilder()
+    .setName("setrole")
+    .setDescription("Set the role to mention with the daily message")
+    .addRoleOption((option) => option.setName("role").setDescription("Select a role").setRequired(true)),
+  new SlashCommandBuilder().setName("ping").setDescription("Check if the bot is responding"),
+  new SlashCommandBuilder().setName("status").setDescription("Check the current bot configuration for this server"),
+  new SlashCommandBuilder().setName("help").setDescription("Show bot help message"),
+].map((command) => command.toJSON())
+
+// Register commands globally
+const registerCommands = async () => {
+  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN)
+  try {
+    console.log("Registering slash commands globally...")
+    await rest.put(
+      Routes.applicationCommands(process.env.CLIENT_ID), // Register globally
+      { body: commands },
+    )
+    console.log("Commands registered globally.")
+  } catch (err) {
+    console.error("Failed to register commands:", err)
+  }
+}
+
+// Setup bot when ready
+client.once("ready", async () => {
+  console.log(`Bot is online as ${client.user.tag}`)
+  await loadData()
+  await registerCommands()
+
+  // Set a custom status
+  client.user.setActivity("/help | Color Bot", { type: "PLAYING" })
+
+  // Cron job at 22:30
+  cron.schedule("30 22 * * *", async () => {
+    console.log("Running daily color job...")
+
+    // Send to all configured servers
+    for (const [guildId, settings] of serverSettings.entries()) {
+      try {
+        if (!settings.channelId) continue
+
+        const channel = await client.channels.fetch(settings.channelId).catch((err) => {
+          console.error(`Failed to fetch channel for guild ${guildId}:`, err.message)
+          return null
+        })
+
+        if (!channel) {
+          console.log(`Channel not found for guild ${guildId}, skipping`)
+          continue
+        }
+
+        const kleur = await getColorInfo()
+
+        const embed = new EmbedBuilder()
+          .setTitle("Color of the day")
+          .setDescription(`**${kleur.name}**\nHex: #${kleur.hex}\nRGB: ${kleur.rgb}`)
+          .setColor(`#${kleur.hex}`)
+          .setImage(`https://www.thecolorapi.com/id?format=svg&hex=${kleur.hex}`)
+          .setFooter({ text: "Generated by TheColorAPI.com" })
+
+        const mention = settings.roleId ? `<@&${settings.roleId}>` : "@everyone"
+        await channel.send({ content: mention, embeds: [embed] })
+        console.log(`Sent daily color to guild ${guildId}`)
+      } catch (error) {
+        console.error(`Error sending daily color to guild ${guildId}:`, error.message)
+      }
+    }
+  })
+})
+
+// Handle interactions
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isCommand()) return
+
+  try {
+    const { commandName, guildId } = interaction
+
+    // Initialize settings for this guild if they don't exist
+    if (!serverSettings.has(guildId)) {
+      serverSettings.set(guildId, { channelId: null, roleId: null })
+    }
+
+    // Commands that require permissions
+    if (commandName === "setchannel" || commandName === "setrole") {
+      // Check for ADMINISTRATOR or MANAGE_CHANNELS permission
+      if (!interaction.memberPermissions.has("Administrator") && !interaction.memberPermissions.has("ManageChannels")) {
+        return interaction.reply({
+          content: "You need Administrator or Manage Channels permission to use this command!",
+          ephemeral: true,
+        })
+      }
+    }
+
+    if (commandName === "setchannel") {
+      const channel = interaction.options.getChannel("channel")
+      const settings = serverSettings.get(guildId)
+      settings.channelId = channel.id
+      await saveData()
+      await interaction.reply(`✅ Daily color messages will now be sent to ${channel}`)
+    } else if (commandName === "setrole") {
+      const role = interaction.options.getRole("role")
+      const settings = serverSettings.get(guildId)
+      settings.roleId = role.id
+      await saveData()
+      await interaction.reply(`✅ The role that will be mentioned is now: ${role}`)
+    } else if (commandName === "ping") {
+      const latency = Math.round(client.ws.ping)
+      await interaction.reply(`🏓 Pong! Bot latency: ${latency}ms`)
+    } else if (commandName === "status") {
+      const settings = serverSettings.get(guildId)
+
+      let statusMessage = "📊 **Bot Configuration**\n\n"
+
+      if (settings?.channelId) {
+        try {
+          const channel = await client.channels.fetch(settings.channelId)
+          statusMessage += `📝 Daily color channel: <#${settings.channelId}> (${channel.name})\n`
+        } catch {
+          statusMessage += `📝 Daily color channel: Not found (ID: ${settings.channelId})\n`
+        }
+      } else {
+        statusMessage += "📝 Daily color channel: Not set\n"
+      }
+
+      if (settings?.roleId) {
+        try {
+          const role = await interaction.guild.roles.fetch(settings.roleId)
+          statusMessage += `👥 Mention role: <@&${settings.roleId}> (${role.name})\n`
+        } catch {
+          statusMessage += `👥 Mention role: Not found (ID: ${settings.roleId})\n`
+        }
+      } else {
+        statusMessage += "👥 Mention role: Not set (will mention @everyone)\n"
+      }
+
+      statusMessage += "\n⏰ Daily colors are sent at 22:30 UTC"
+
+      await interaction.reply(statusMessage)
+    } else if (commandName === "help") {
+      const helpEmbed = new EmbedBuilder()
+        .setTitle("🎨 Color Bot Help")
+        .setDescription("Daily random color messages for your server!")
+        .setColor("#FF5733")
+        .addFields(
+          { name: "/setchannel", value: "Set the channel where daily colors will be posted (Admin only)" },
+          { name: "/setrole", value: "Set the role to be mentioned with daily colors (Admin only)" },
+          { name: "/status", value: "Check the current bot configuration" },
+          { name: "/ping", value: "Check if the bot is responding" },
+          { name: "/help", value: "Show this help message" },
+        )
+        .setFooter({ text: "Colors are posted daily at 22:30 UTC" })
+
+      await interaction.reply({ embeds: [helpEmbed] })
+    }
+  } catch (error) {
+    console.error(`Error handling command ${interaction.commandName}:`, error)
+
+    // Try to respond to the user if we haven't already
+    try {
+      const message = "An error occurred while processing this command. Please try again later."
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: message, ephemeral: true })
+      } else {
+        await interaction.reply({ content: message, ephemeral: true })
+      }
+    } catch (followUpError) {
+      console.error("Error sending error message:", followUpError)
+    }
+  }
+})
+
+// Fetch color info
 async function getColorInfo() {
-    const hex = getRandomHexColor();
-    const res = await fetch(`https://www.thecolorapi.com/id?hex=${hex}`);
-    const data = await res.json();
+  const hex = getRandomHexColor()
+  try {
+    const res = await fetch(`https://www.thecolorapi.com/id?hex=${hex}`)
+    const data = await res.json()
 
     return {
-        name: data.name.value,
-        hex: hex,
-        rgb: data.rgb.value,
-        image: data.image.bare,
-    };
+      name: data.name.value,
+      hex: hex,
+      rgb: data.rgb.value,
+    }
+  } catch (error) {
+    console.error("Error fetching color info:", error)
+    // Return fallback data
+    return {
+      name: `Color #${hex.toUpperCase()}`,
+      hex: hex,
+      rgb: "RGB value unavailable",
+    }
+  }
 }
 
-client.once('ready', () => {
-    console.log(`Bot is online als ${client.user.tag}`);
+// Generate random hex
+function getRandomHexColor() {
+  const hex = Math.floor(Math.random() * 16777215).toString(16)
+  return hex.padStart(6, "0")
+}
 
-    // schedule task every day at 15:00 (3 PM)
-    cron.schedule('0 15 * * *', async () => {
-        for (const [guildId, channelId] of channelMap.entries()) {
-            try {
-                const channel = await client.channels.fetch(channelId);
-                if (!channel) continue;
+// Handle errors
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error)
+})
 
-                const kleur = await getColorInfo();
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled Promise Rejection:", error)
+})
 
-                const embed = new EmbedBuilder()
-                    .setTitle(`🎨 Kleur van de Dag`)
-                    .setDescription(`**${kleur.name}**\nHex: #${kleur.hex}\nRGB: ${kleur.rgb}`)
-                    .setColor(`#${kleur.hex}`)
-                    .setImage(kleur.image)
-                    .setFooter({ text: 'Gegenereerd met TheColorAPI.com' });
-
-                channel.send({ embeds: [embed] });
-            } catch (err) {
-                console.error(`Fout bij het sturen naar ${channelId}:`, err);
-            }
-        }
-    });
-});
-
-client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
-
-    if (interaction.commandName === 'setchannel') {
-        if (!interaction.member.permissions.has('ManageGuild')) {
-            return interaction.reply({
-                content: 'Je hebt geen toestemming om dit commando te gebruiken (Beheer Server vereist).',
-                ephemeral: true
-            });
-        }
-
-        const channel = interaction.options.getChannel('channel');
-
-        if (!channel || channel.type !== 0) {
-            return interaction.reply({
-                content: 'Kies een geldig tekstkanaal.',
-                ephemeral: true
-            });
-        }
-
-        channelMap.set(interaction.guild.id, channel.id);
-        await interaction.reply(`✅ Dagelijkse kleur zal nu worden gepost in <#${channel.id}>.`);
-    }
-});
-
-client.login(process.env.DISCORD_TOKEN);
+// Start bot
+client.login(process.env.DISCORD_TOKEN).catch((error) => {
+  console.error("Failed to login:", error)
+  process.exit(1)
+})
