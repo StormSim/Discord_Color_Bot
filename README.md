@@ -35,7 +35,7 @@ https://www.thecolorapi.com/
 ## add bot to server
 
 ```http
-https://discord.com/oauth2/authorize?client_id=1362878729373618177&permissions=183296&integration_type=0&scope=bot
+https://discord.com/oauth2/authorize?client_id=1362878729373618177&permissions=1689934340029504&integration_type=0&scope=bot
 ```
 
 
