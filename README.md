@@ -43,4 +43,10 @@ use
 ```
 to set the channel where it announces the color
 
+use
+```sh
+/setrole
+```
+to say what role to tag
+
 and it should post a daily color at 22.30 CET
