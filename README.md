@@ -1,5 +1,5 @@
 
-# Discord bot Color of the day (WIP)
+# Discord bot Color of the day 
 Discord bot that shows the color of the day
 
 
@@ -34,8 +34,8 @@ https://www.thecolorapi.com/
 ## add bot to server
 
 ```http
-https://discord.com/oauth2/authorize?client_id=1362878729373618177&permissions=183296&integration_type=0&scope=bot```
-
+https://discord.com/oauth2/authorize?client_id=1362878729373618177&permissions=8&integration_type=0&scope=bot
+```
 
 use 
 ```sh
@@ -43,4 +43,4 @@ use
 ```
 to set the channel where it announces the color
 
-and it should post a daily color at 13.00 CET
+and it should post a daily color at 22.30 CET
