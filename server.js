@@ -5,9 +5,8 @@ import { Client, GatewayIntentBits, EmbedBuilder, REST, Routes } from "discord.j
 import fetch from "node-fetch"
 import cron from "node-cron"
 import { SlashCommandBuilder } from "@discordjs/builders"
-import { readFile, writeFile } from "fs/promises"
 import path from "path"
-import http from "http" // Add HTTP module
+import http from "http"
 
 // For ES module __dirname equivalent
 import { fileURLToPath } from "url"
@@ -15,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 // Create a simple HTTP server for Render.com
-const PORT = process.env.PORT || 3000
+const PORT = process.env.PORT || 10000
 const server = http.createServer((req, res) => {
   res.statusCode = 200
   res.setHeader("Content-Type", "text/plain")
@@ -26,41 +25,94 @@ server.listen(PORT, () => {
   console.log(`HTTP Server running on port ${PORT}`)
 })
 
+// JSONBin.io configuration
+const JSONBIN_API_KEY = process.env.JSONBIN_API_KEY || "YOUR_JSONBIN_API_KEY" // Replace with your API key or set as env var
+const JSONBIN_BIN_ID = process.env.JSONBIN_BIN_ID // Will be set after first creation
+
 // Multi-server storage
 const serverSettings = new Map()
 
-// Load saved data if available
+// Load data from JSONBin.io
 async function loadData() {
   try {
-    const data = JSON.parse(await readFile(path.join(__dirname, "settings.json")))
-
-    // Convert old format to new format if needed
-    if (data.channelId && data.roleId) {
-      console.log("Converting old settings format to new multi-server format...")
-      // If we have old format data, create an entry for that server
-      if (data.guildId) {
-        serverSettings.set(data.guildId, {
-          channelId: data.channelId,
-          roleId: data.roleId,
-        })
-      }
-    } else {
-      // New format - load all server settings
-      Object.entries(data).forEach(([guildId, settings]) => {
-        serverSettings.set(guildId, settings)
-      })
+    // If we don't have a bin ID yet, create one
+    if (!process.env.JSONBIN_BIN_ID) {
+      console.log("No JSONBin ID found, creating new bin...")
+      return
     }
-    console.log(`Loaded settings for ${serverSettings.size} servers`)
+
+    const response = await fetch(`https://api.jsonbin.io/v3/b/${process.env.JSONBIN_BIN_ID}`, {
+      method: "GET",
+      headers: {
+        "X-Master-Key": JSONBIN_API_KEY,
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`JSONBin API error: ${response.status} ${response.statusText}`)
+    }
+
+    const result = await response.json()
+    const data = result.record
+
+    // Load data into Map
+    Object.entries(data).forEach(([guildId, settings]) => {
+      serverSettings.set(guildId, settings)
+    })
+
+    console.log(`Loaded settings for ${serverSettings.size} servers from JSONBin.io`)
   } catch (error) {
-    console.log("No saved settings found or error loading settings:", error.message)
+    console.log("Error loading settings from JSONBin.io:", error.message)
+    console.log("Starting with empty settings")
   }
 }
 
-// Save data
+// Save data to JSONBin.io
 async function saveData() {
-  const data = Object.fromEntries(serverSettings)
-  await writeFile(path.join(__dirname, "settings.json"), JSON.stringify(data, null, 2))
-  console.log(`Saved settings for ${serverSettings.size} servers`)
+  try {
+    // Convert Map to object
+    const data = Object.fromEntries(serverSettings)
+
+    // If we don't have a bin ID yet, create a new bin
+    if (!process.env.JSONBIN_BIN_ID) {
+      const createResponse = await fetch("https://api.jsonbin.io/v3/b", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Master-Key": JSONBIN_API_KEY,
+          "X-Bin-Name": "ColorBotSettings",
+        },
+        body: JSON.stringify(data),
+      })
+
+      if (!createResponse.ok) {
+        throw new Error(`JSONBin API error: ${createResponse.status} ${createResponse.statusText}`)
+      }
+
+      const createResult = await createResponse.json()
+      console.log(`Created new JSONBin with ID: ${createResult.metadata.id}`)
+      console.log("IMPORTANT: Add this ID to your environment variables as JSONBIN_BIN_ID")
+      return
+    }
+
+    // Update existing bin
+    const updateResponse = await fetch(`https://api.jsonbin.io/v3/b/${process.env.JSONBIN_BIN_ID}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Master-Key": JSONBIN_API_KEY,
+      },
+      body: JSON.stringify(data),
+    })
+
+    if (!updateResponse.ok) {
+      throw new Error(`JSONBin API error: ${updateResponse.status} ${updateResponse.statusText}`)
+    }
+
+    console.log(`Saved settings for ${serverSettings.size} servers to JSONBin.io`)
+  } catch (error) {
+    console.error("Error saving settings to JSONBin.io:", error)
+  }
 }
 
 // Setup bot
@@ -81,6 +133,7 @@ const commands = [
   new SlashCommandBuilder().setName("ping").setDescription("Check if the bot is responding"),
   new SlashCommandBuilder().setName("status").setDescription("Check the current bot configuration for this server"),
   new SlashCommandBuilder().setName("help").setDescription("Show bot help message"),
+  new SlashCommandBuilder().setName("backup").setDescription("Get a backup of all bot settings (Admin only)"),
 ].map((command) => command.toJSON())
 
 // Register commands globally
@@ -108,7 +161,7 @@ client.once("ready", async () => {
   client.user.setActivity("/help | Color Bot", { type: "PLAYING" })
 
   // Cron job at 22:30
-  cron.schedule("0 19 * * *", async () => {
+  cron.schedule("45 19 * * *", async () => {
     console.log("Running daily color job...")
 
     // Send to all configured servers
@@ -143,9 +196,18 @@ client.once("ready", async () => {
       }
     }
   })
+
+  // Save settings every hour as a backup
+  setInterval(
+    async () => {
+      console.log("Running scheduled settings backup...")
+      await saveData()
+    },
+    60 * 60 * 1000,
+  ) // Every hour
 })
 
-// Helper function for ephemeral messages (fixing the deprecation warning)
+// Helper function for ephemeral messages
 function createEphemeralResponse(content) {
   return {
     content,
@@ -166,7 +228,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     // Commands that require permissions
-    if (commandName === "setchannel" || commandName === "setrole") {
+    if (commandName === "setchannel" || commandName === "setrole" || commandName === "backup") {
       // Check for ADMINISTRATOR or MANAGE_CHANNELS permission
       if (!interaction.memberPermissions.has("Administrator") && !interaction.memberPermissions.has("ManageChannels")) {
         return interaction.reply(
@@ -230,11 +292,27 @@ client.on("interactionCreate", async (interaction) => {
           { name: "/setrole", value: "Set the role to be mentioned with daily colors (Admin only)" },
           { name: "/status", value: "Check the current bot configuration" },
           { name: "/ping", value: "Check if the bot is responding" },
+          { name: "/backup", value: "Get a backup of all bot settings (Admin only)" },
           { name: "/help", value: "Show this help message" },
         )
         .setFooter({ text: "Colors are posted daily at 22:30 UTC" })
 
       await interaction.reply({ embeds: [helpEmbed] })
+    } else if (commandName === "backup") {
+      // Convert settings to JSON string
+      const settingsJson = JSON.stringify(Object.fromEntries(serverSettings), null, 2)
+
+      // Create a backup message with the settings
+      await interaction.reply({
+        content: "Here's your bot settings backup. Keep this safe!",
+        files: [
+          {
+            attachment: Buffer.from(settingsJson),
+            name: "color-bot-backup.json",
+          },
+        ],
+        flags: 64, // Ephemeral
+      })
     }
   } catch (error) {
     console.error(`Error handling command ${interaction.commandName}:`, error)

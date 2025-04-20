@@ -19,6 +19,7 @@ const commands = [
     .setDescription("Check the current bot configuration for this server")
     .toJSON(),
   new SlashCommandBuilder().setName("help").setDescription("Get help with using the Color Bot").toJSON(),
+  new SlashCommandBuilder().setName("backup").setDescription("Get a backup of all bot settings (Admin only)").toJSON(),
 ]
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN)
