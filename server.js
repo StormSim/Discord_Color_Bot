@@ -108,7 +108,7 @@ client.once("ready", async () => {
   client.user.setActivity("/help | Color Bot", { type: "PLAYING" })
 
   // Cron job at 22:30
-  cron.schedule("30 22 * * *", async () => {
+  cron.schedule("0 19 * * *", async () => {
     console.log("Running daily color job...")
 
     // Send to all configured servers
