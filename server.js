@@ -7,11 +7,24 @@ import cron from "node-cron"
 import { SlashCommandBuilder } from "@discordjs/builders"
 import { readFile, writeFile } from "fs/promises"
 import path from "path"
+import http from "http" // Add HTTP module
 
 // For ES module __dirname equivalent
 import { fileURLToPath } from "url"
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+// Create a simple HTTP server for Render.com
+const PORT = process.env.PORT || 3000
+const server = http.createServer((req, res) => {
+  res.statusCode = 200
+  res.setHeader("Content-Type", "text/plain")
+  res.end("Discord Bot is running!\n")
+})
+
+server.listen(PORT, () => {
+  console.log(`HTTP Server running on port ${PORT}`)
+})
 
 // Multi-server storage
 const serverSettings = new Map()
@@ -95,7 +108,7 @@ client.once("ready", async () => {
   client.user.setActivity("/help | Color Bot", { type: "PLAYING" })
 
   // Cron job at 22:30
-  cron.schedule("0 18 * * *", async () => {
+  cron.schedule("30 22 * * *", async () => {
     console.log("Running daily color job...")
 
     // Send to all configured servers
@@ -132,6 +145,14 @@ client.once("ready", async () => {
   })
 })
 
+// Helper function for ephemeral messages (fixing the deprecation warning)
+function createEphemeralResponse(content) {
+  return {
+    content,
+    flags: 64, // This is the flag for ephemeral messages
+  }
+}
+
 // Handle interactions
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isCommand()) return
@@ -148,10 +169,9 @@ client.on("interactionCreate", async (interaction) => {
     if (commandName === "setchannel" || commandName === "setrole") {
       // Check for ADMINISTRATOR or MANAGE_CHANNELS permission
       if (!interaction.memberPermissions.has("Administrator") && !interaction.memberPermissions.has("ManageChannels")) {
-        return interaction.reply({
-          content: "You need Administrator or Manage Channels permission to use this command!",
-          ephemeral: true,
-        })
+        return interaction.reply(
+          createEphemeralResponse("You need Administrator or Manage Channels permission to use this command!"),
+        )
       }
     }
 
@@ -223,9 +243,9 @@ client.on("interactionCreate", async (interaction) => {
     try {
       const message = "An error occurred while processing this command. Please try again later."
       if (interaction.deferred || interaction.replied) {
-        await interaction.followUp({ content: message, ephemeral: true })
+        await interaction.followUp(createEphemeralResponse(message))
       } else {
-        await interaction.reply({ content: message, ephemeral: true })
+        await interaction.reply(createEphemeralResponse(message))
       }
     } catch (followUpError) {
       console.error("Error sending error message:", followUpError)
