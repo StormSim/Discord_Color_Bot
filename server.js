@@ -345,7 +345,7 @@ async function getColorInfo() {
     const data = await res.json()
 
     return {
-      name: data.name.value,
+      name: data.name.exact_match_name || data.name.value, 
       hex: hex,
       rgb: data.rgb.value,
     }
