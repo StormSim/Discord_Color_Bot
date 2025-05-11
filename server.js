@@ -41,14 +41,19 @@ async function loadData() {
       return
     }
 
+    console.log(`Attempting to load data from JSONBin ID: ${process.env.JSONBIN_BIN_ID}`)
+    
     const response = await fetch(`https://api.jsonbin.io/v3/b/${process.env.JSONBIN_BIN_ID}`, {
       method: "GET",
       headers: {
         "X-Master-Key": JSONBIN_API_KEY,
+        "Content-Type": "application/json"
       },
     })
 
     if (!response.ok) {
+      console.error(`JSONBin API error: ${response.status} ${response.statusText}`)
+      console.error("Response body:", await response.text())
       throw new Error(`JSONBin API error: ${response.status} ${response.statusText}`)
     }
 
@@ -62,7 +67,8 @@ async function loadData() {
 
     console.log(`Loaded settings for ${serverSettings.size} servers from JSONBin.io`)
   } catch (error) {
-    console.log("Error loading settings from JSONBin.io:", error.message)
+    console.error("Error loading settings from JSONBin.io:", error.message)
+    console.error("Full error:", error)
     console.log("Starting with empty settings")
   }
 }
@@ -160,8 +166,8 @@ client.once("ready", async () => {
   // Set a custom status
   client.user.setActivity("/help | Color Bot", { type: "PLAYING" })
 
-  // Cron job at 22:30
-  cron.schedule("45 19 * * *", async () => {
+  // Cron job at midnight
+  cron.schedule("0 0 * * *", async () => {
     console.log("Running daily color job...")
 
     // Send to all configured servers
@@ -374,3 +380,4 @@ client.login(process.env.DISCORD_TOKEN).catch((error) => {
   console.error("Failed to login:", error)
   process.exit(1)
 })
+
